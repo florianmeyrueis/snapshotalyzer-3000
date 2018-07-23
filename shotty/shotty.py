@@ -2,8 +2,10 @@ import boto3
 import botocore
 import click
 
-session = boto3.Session(profile_name='shotty')
-ec2= session.resource('ec2')
+#session = boto3.Session(profile_name='shotty')
+#ec2 = session.resource('ec2')
+
+
 
 def filter_instances(project):
     instances =[]
@@ -23,8 +25,18 @@ def has_pending_snapshot(volume):
 
 
 @click.group()
-def cli():
-    """ Shotty manager cli """
+@click.option('--profile', default='shotty',  help="Allow different aws profile")
+def cli(profile):
+    " Shotty manager cli "
+    global ec2
+    try:
+        session = boto3.Session(profile_name=profile)
+        ec2 = session.resource('ec2')
+    except botocore.exceptions.ProfileNotFound as e:
+        print("Connection not possible : {0}".format(str(e)))
+        quit()        
+
+    return 
 
 @cli.group('snapshots')
 def snapshots():
@@ -106,68 +118,98 @@ def list_instances(project):
 
 @instances.command('stop')
 @click.option('--project', default=None,  help="Only instances for project (tag Project:<name>)")
-def stop_instances(project):
+@click.option('--force', 'force', default=None, is_flag=True, help="Required to stop all instances")
+def stop_instances(project,force):
     "Stop EC2 instances"
 
     instances = filter_instances(project)
 
-    for i in instances:
-        print('stopping instances {0}'.format(i.id))
-        try: 
-            i.stop()
-        except botocore.exceptions.ClientError as e:
-            print("Could not stop {0}. ".format(i.id) + str(e) ) 
-            continue
+    if project or force:
+        for i in instances:
+            print('stopping instances {0}'.format(i.id))
+            try: 
+                i.stop()
+            except botocore.exceptions.ClientError as e:
+                print("Could not stop {0}. ".format(i.id) + str(e) ) 
+                continue
+    else : 
+        print("Can't stop all instances without a force option. Use project!")
 
     return
 
 @instances.command('start')
 @click.option('--project', default=None,  help="Only instances for project (tag Project:<name>)")
-def start_instances(project):
+@click.option('--force', 'force', default=None, is_flag=True, help="Required to start all instances")
+def start_instances(project,force):
     "Start EC2 instances"
 
     instances = filter_instances(project)
 
-    for i in instances:
-        print('starting instances {0}'.format(i.id))
-        try:
-            i.start()
-        except botocore.exceptions.ClientError as e:
-            print("Could not start {0}. ".format(i.id) + str(e) )
-            continue
+    if project or force: 
+        for i in instances:
+            print('starting instances {0}'.format(i.id))
+            try:
+                i.start()
+            except botocore.exceptions.ClientError as e:
+                print("Could not start {0}. ".format(i.id) + str(e) )
+                continue
+    else :
+        print("Can't start all instances without a force option. Use project!")
+    return
 
+@instances.command('reboot')
+@click.option('--project', default=None,  help="Only instances for project (tag Project:<name>)")
+@click.option('--force', 'force', default=None, is_flag=True, help="Required to stop all instances")
+def reboot_instances(project,force):
+    "Reboot EC2 instances"
+
+    instances = filter_instances(project)
+
+    if project or force:
+        for i in instances:
+            print('Rebooting instance {0}'.format(i.id))
+            try:
+                i.reboot()
+            except botocore.exceptions.ClientError as e:
+                print("Could not reboot {0}. ".format(i.id) + str(e) )
+                continue
+    else: 
+        print("Can't reboot all instances without a force option. Use project!")
     return
 
 @instances.command('snapshot',help="create snapshot for instances")
 @click.option('--project', default=None,  help="Only instances for project (tag Project:<name>)")
-def create_snapshot(project):
+@click.option('--force', 'force', default=None, is_flag=True, help="Required to stop all instances")
+def create_snapshot(project,force):
     "Create Snapshots for ec2 instances"
 
     instances = filter_instances(project)
+    if project or force:
+        for i in instances: 
+            print("Stopping instance {0}".format(i.id))
 
-    for i in instances: 
-        print("Stopping instance {0}".format(i.id))
+            i.stop()
+            i.wait_until_stopped()
 
-        i.stop()
-        i.wait_until_stopped()
+            for v in i.volumes.all():
+                if has_pending_snapshot(v):
+                    print("Skipping {0}, snapshot already in progree".format(v.id))
+                    continue
+                print("Creating snapshot for {0}".format(v.id))
+                v.create_snapshot(Description="Snapshot created by Snapshotalyzer30000")
 
-        for v in i.volumes.all():
-            if has_pending_snapshot(v):
-                print("Skipping {0}, snapshot already in progree".format(v.id))
-                continue
-            print("Creating snapshot for {0}".format(v.id))
-            v.create_snapshot(Description="Snapshot created by Snapshotalyzer30000")
+            print("Starting instance {0}".format(i.id))
 
-        print("Starting instance {0}".format(i.id))
+            i.start()
+            i.wait_until_running()
 
-        i.start()
-        i.wait_until_running()
-
-    print("Job's done!")
-
+        print("Job's done!")
+    else: 
+        print("Can't snapshot all instances without a force option. Use project!")
     return
 
     
 if __name__ == '__main__':
     cli()
+    
 
